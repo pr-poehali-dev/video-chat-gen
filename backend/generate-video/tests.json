@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "Test video generation with prompt",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "prompt": "A serene sunset over the ocean"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "task_id": "string",
+        "status": "processing",
+        "prompt": "A serene sunset over the ocean"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Test missing prompt",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 400,
+      "expectedBody": {
+        "error": "Prompt is required"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

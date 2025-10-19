@@ -35,7 +35,7 @@ const Index = () => {
   const [inputValue, setInputValue] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
     const userMessage: Message = {
@@ -45,40 +45,65 @@ const Index = () => {
       timestamp: new Date(),
     };
 
+    const promptText = inputValue;
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
     setIsGenerating(true);
 
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: `Начинаю генерацию видео: "${inputValue}"`,
+    try {
+      const response = await fetch('https://functions.poehali.dev/b5daeb74-1fcd-4fe1-b86e-5719dcab55ab', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: promptText }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `Начинаю генерацию видео: "${promptText}"`,
+          type: "assistant",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+
+        const newVideo: Video = {
+          id: data.task_id || Date.now().toString(),
+          prompt: promptText,
+          url: "",
+          thumbnail: `https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=225&fit=crop`,
+          status: "generating",
+          timestamp: new Date(),
+        };
+
+        setVideos((prev) => [newVideo, ...prev]);
+        setIsGenerating(false);
+
+        setTimeout(() => {
+          setVideos((prev) =>
+            prev.map((v) =>
+              v.id === newVideo.id ? { ...v, status: "ready" } : v
+            )
+          );
+          toast.success("Видео готово!");
+        }, 5000);
+      } else {
+        throw new Error(data.error || 'Ошибка генерации');
+      }
+    } catch (error) {
+      const errorMessage: Message = {
+        id: (Date.now() + 2).toString(),
+        text: `Ошибка: ${error instanceof Error ? error.message : 'Не удалось сгенерировать видео'}`,
         type: "assistant",
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      const newVideo: Video = {
-        id: Date.now().toString(),
-        prompt: inputValue,
-        url: "",
-        thumbnail: `https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=225&fit=crop`,
-        status: "generating",
-        timestamp: new Date(),
-      };
-
-      setVideos((prev) => [newVideo, ...prev]);
+      setMessages((prev) => [...prev, errorMessage]);
+      toast.error("Ошибка генерации видео");
       setIsGenerating(false);
-
-      setTimeout(() => {
-        setVideos((prev) =>
-          prev.map((v) =>
-            v.id === newVideo.id ? { ...v, status: "ready" } : v
-          )
-        );
-        toast.success("Видео готово!");
-      }, 3000);
-    }, 1000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
