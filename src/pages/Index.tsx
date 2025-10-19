@@ -1,108 +1,119 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import Icon from "@/components/ui/icon";
 import { toast } from "sonner";
-
-interface Message {
-  id: string;
-  text: string;
-  type: "user" | "assistant";
-  timestamp: Date;
-}
 
 interface Video {
   id: string;
   prompt: string;
-  url: string;
+  status: "queue" | "generating" | "ready" | "error";
+  url?: string;
   thumbnail: string;
-  status: "generating" | "ready";
   timestamp: Date;
+  progress: number;
 }
 
 const Index = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      text: "Привет! Я помогу создать видео. Опиши, что хочешь увидеть 🎬",
-      type: "assistant",
-      timestamp: new Date(),
-    },
-  ]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [videos]);
+
+  const generateThumbnail = () => {
+    const thumbnails = [
+      "https://images.unsplash.com/photo-1536440136628-849c177e76a1",
+      "https://images.unsplash.com/photo-1492691527719-9d1e07e534b4",
+      "https://images.unsplash.com/photo-1518709268805-4e9042af9f23",
+      "https://images.unsplash.com/photo-1501785888041-af3ef285b470",
+      "https://images.unsplash.com/photo-1506905925346-21bda4d32df4",
+    ];
+    return thumbnails[Math.floor(Math.random() * thumbnails.length)] + "?w=600&h=400&fit=crop";
+  };
 
   const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || isProcessing) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputValue,
-      type: "user",
+    const promptText = inputValue.trim();
+    setInputValue("");
+    setIsProcessing(true);
+
+    const newVideo: Video = {
+      id: `video_${Date.now()}`,
+      prompt: promptText,
+      status: "queue",
+      thumbnail: generateThumbnail(),
       timestamp: new Date(),
+      progress: 0,
     };
 
-    const promptText = inputValue;
-    setMessages((prev) => [...prev, userMessage]);
-    setInputValue("");
-    setIsGenerating(true);
+    setVideos((prev) => [newVideo, ...prev]);
 
     try {
-      const response = await fetch('https://functions.poehali.dev/b5daeb74-1fcd-4fe1-b86e-5719dcab55ab', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ prompt: promptText }),
-      });
+      setTimeout(() => {
+        setVideos((prev) =>
+          prev.map((v) => (v.id === newVideo.id ? { ...v, status: "generating", progress: 10 } : v))
+        );
+      }, 500);
+
+      const response = await fetch(
+        "https://functions.poehali.dev/b5daeb74-1fcd-4fe1-b86e-5719dcab55ab",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ prompt: promptText }),
+        }
+      );
 
       const data = await response.json();
 
       if (response.ok) {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: `Начинаю генерацию видео: "${promptText}"`,
-          type: "assistant",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        let progress = 20;
+        const progressInterval = setInterval(() => {
+          progress += Math.random() * 15;
+          if (progress > 90) progress = 90;
 
-        const newVideo: Video = {
-          id: data.task_id || Date.now().toString(),
-          prompt: promptText,
-          url: "",
-          thumbnail: `https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=225&fit=crop`,
-          status: "generating",
-          timestamp: new Date(),
-        };
-
-        setVideos((prev) => [newVideo, ...prev]);
-        setIsGenerating(false);
+          setVideos((prev) =>
+            prev.map((v) => (v.id === newVideo.id ? { ...v, progress } : v))
+          );
+        }, 800);
 
         setTimeout(() => {
+          clearInterval(progressInterval);
           setVideos((prev) =>
             prev.map((v) =>
-              v.id === newVideo.id ? { ...v, status: "ready" } : v
+              v.id === newVideo.id
+                ? { ...v, status: "ready", progress: 100, url: v.thumbnail }
+                : v
             )
           );
-          toast.success("Видео готово!");
-        }, 5000);
+          toast.success("Видео готово! 🎬");
+        }, 6000);
       } else {
-        throw new Error(data.error || 'Ошибка генерации');
+        throw new Error(data.error || "Ошибка генерации");
       }
     } catch (error) {
-      const errorMessage: Message = {
-        id: (Date.now() + 2).toString(),
-        text: `Ошибка: ${error instanceof Error ? error.message : 'Не удалось сгенерировать видео'}`,
-        type: "assistant",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-      toast.error("Ошибка генерации видео");
-      setIsGenerating(false);
+      setVideos((prev) =>
+        prev.map((v) =>
+          v.id === newVideo.id ? { ...v, status: "error", progress: 0 } : v
+        )
+      );
+      toast.error(`Ошибка: ${error instanceof Error ? error.message : "Не удалось создать видео"}`);
+    } finally {
+      setIsProcessing(false);
+      inputRef.current?.focus();
     }
   };
 
@@ -113,165 +124,153 @@ const Index = () => {
     }
   };
 
+  const getStatusBadge = (status: Video["status"]) => {
+    switch (status) {
+      case "queue":
+        return <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/30">В очереди</Badge>;
+      case "generating":
+        return <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30 animate-pulse">Генерация</Badge>;
+      case "ready":
+        return <Badge className="bg-green-500/20 text-green-300 border-green-500/30">Готово</Badge>;
+      case "error":
+        return <Badge className="bg-red-500/20 text-red-300 border-red-500/30">Ошибка</Badge>;
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      <div className="absolute inset-0 bg-gradient-radial from-primary/10 via-transparent to-transparent opacity-30" />
-      
-      <div className="relative z-10 container mx-auto px-4 py-8 max-w-7xl">
-        <div className="mb-8 text-center animate-fade-in">
-          <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-vibrant bg-clip-text text-transparent">
-            Veo Studio
-          </h1>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl">
+        <div className="text-center mb-8 animate-fade-in">
+          <div className="inline-flex items-center gap-3 mb-3">
+            <div className="w-12 h-12 bg-gradient-vibrant rounded-xl flex items-center justify-center">
+              <Icon name="Video" className="text-white" size={28} />
+            </div>
+            <h1 className="text-4xl md:text-5xl font-bold bg-gradient-vibrant bg-clip-text text-transparent">
+              Veo 3.1 Studio
+            </h1>
+          </div>
           <p className="text-muted-foreground text-lg">
-            Создавай видео силой слов с помощью Veo 3.1
+            Опиши видео — получи результат. Бесконечные генерации 🎬
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="p-6 backdrop-blur-sm bg-card/50 border-primary/20 animate-slide-up">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-3 h-3 rounded-full bg-gradient-purple animate-pulse-glow" />
-              <h2 className="text-xl font-semibold">Чат генерации</h2>
-            </div>
-
-            <ScrollArea className="h-[400px] mb-4 pr-4">
-              <div className="space-y-4">
-                {messages.map((message, idx) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${
-                      message.type === "user" ? "justify-end" : "justify-start"
-                    } animate-fade-in`}
-                    style={{ animationDelay: `${idx * 0.1}s` }}
-                  >
-                    <div
-                      className={`max-w-[80%] p-4 rounded-2xl ${
-                        message.type === "user"
-                          ? "bg-gradient-purple text-white"
-                          : "bg-muted/50 text-foreground"
-                      }`}
-                    >
-                      <p className="text-sm">{message.text}</p>
-                      <span className="text-xs opacity-60 mt-1 block">
-                        {message.timestamp.toLocaleTimeString("ru-RU", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-
-            <div className="flex gap-2">
+        <Card className="bg-card/50 backdrop-blur-xl border-border/50 shadow-2xl overflow-hidden animate-slide-up">
+          <div className="p-6 border-b border-border/50 bg-gradient-to-r from-primary/5 to-accent/5">
+            <div className="flex gap-3">
               <Input
+                ref={inputRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Опиши видео, которое хочешь создать..."
-                className="flex-1 bg-background/50 border-primary/30 focus:border-primary"
-                disabled={isGenerating}
+                onKeyDown={handleKeyPress}
+                placeholder="Опиши видео: закат над океаном, космический корабль, танцующий робот..."
+                className="flex-1 bg-background/80 border-border/50 text-base h-12"
+                disabled={isProcessing}
               />
               <Button
                 onClick={handleSendMessage}
-                disabled={isGenerating || !inputValue.trim()}
-                className="bg-gradient-purple hover:opacity-90 transition-opacity"
+                disabled={!inputValue.trim() || isProcessing}
+                size="lg"
+                className="bg-gradient-vibrant hover:opacity-90 transition-opacity px-8 h-12"
               >
-                {isGenerating ? (
-                  <Icon name="Loader2" className="animate-spin" size={20} />
-                ) : (
-                  <Icon name="Send" size={20} />
-                )}
+                <Icon name="Sparkles" size={20} className="mr-2" />
+                Создать
               </Button>
             </div>
-          </Card>
+          </div>
 
-          <Card className="p-6 backdrop-blur-sm bg-card/50 border-secondary/20 animate-slide-up" style={{ animationDelay: "0.2s" }}>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-3 h-3 rounded-full bg-gradient-vibrant animate-pulse-glow" />
-              <h2 className="text-xl font-semibold">Галерея видео</h2>
-              {videos.length > 0 && (
-                <span className="ml-auto text-sm text-muted-foreground">
-                  {videos.length} {videos.length === 1 ? "видео" : "видео"}
-                </span>
-              )}
-            </div>
-
-            <ScrollArea className="h-[500px]">
+          <ScrollArea className="h-[600px]" ref={scrollRef}>
+            <div className="p-6">
               {videos.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <Icon name="Video" size={48} className="text-muted-foreground mb-4 opacity-50" />
-                  <p className="text-muted-foreground">
-                    Здесь появятся твои видео
+                <div className="flex flex-col items-center justify-center h-[500px] text-center">
+                  <div className="w-20 h-20 bg-gradient-vibrant rounded-full flex items-center justify-center mb-6 animate-pulse-glow">
+                    <Icon name="Video" size={40} className="text-white" />
+                  </div>
+                  <h3 className="text-2xl font-semibold mb-3">Начни создавать видео</h3>
+                  <p className="text-muted-foreground max-w-md">
+                    Введи описание выше и нажми "Создать". Все видео появятся здесь.
+                    Можешь генерировать бесконечно! 🚀
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4 pr-4">
-                  {videos.map((video, idx) => (
-                    <div
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {videos.map((video, index) => (
+                    <Card
                       key={video.id}
-                      className="group relative overflow-hidden rounded-lg border border-primary/20 bg-muted/20 hover:border-primary/40 transition-all duration-300 animate-fade-in"
-                      style={{ animationDelay: `${idx * 0.1}s` }}
+                      className="group overflow-hidden border-border/50 bg-card/30 hover:bg-card/50 transition-all duration-300 hover:shadow-xl hover:-translate-y-1"
+                      style={{
+                        animation: `fade-in 0.5s ease-out ${index * 0.1}s both`,
+                      }}
                     >
-                      <div className="relative aspect-video overflow-hidden">
+                      <div className="relative aspect-video overflow-hidden bg-muted">
                         <img
                           src={video.thumbnail}
                           alt={video.prompt}
-                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                         />
                         {video.status === "generating" && (
-                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
-                            <div className="text-center">
-                              <Icon
-                                name="Loader2"
-                                className="animate-spin mx-auto mb-2 text-primary"
-                                size={32}
-                              />
-                              <p className="text-sm text-white">Генерация...</p>
+                          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center">
+                            <div className="w-16 h-16 mb-4">
+                              <svg className="animate-spin" viewBox="0 0 24 24">
+                                <circle
+                                  className="opacity-25"
+                                  cx="12"
+                                  cy="12"
+                                  r="10"
+                                  stroke="currentColor"
+                                  strokeWidth="4"
+                                  fill="none"
+                                />
+                                <path
+                                  className="opacity-75"
+                                  fill="currentColor"
+                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                />
+                              </svg>
                             </div>
+                            <div className="w-48 bg-muted rounded-full h-2 overflow-hidden">
+                              <div
+                                className="bg-gradient-vibrant h-full transition-all duration-500"
+                                style={{ width: `${video.progress}%` }}
+                              />
+                            </div>
+                            <p className="text-white text-sm mt-2">{Math.round(video.progress)}%</p>
                           </div>
                         )}
                         {video.status === "ready" && (
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 flex items-center justify-center transition-all duration-300">
-                            <Button
-                              size="icon"
-                              className="opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300 bg-white/90 hover:bg-white text-black"
-                            >
-                              <Icon name="Play" size={24} />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Button size="lg" className="bg-white text-black hover:bg-white/90">
+                              <Icon name="Play" size={24} className="mr-2" />
+                              Смотреть
                             </Button>
                           </div>
                         )}
                       </div>
                       <div className="p-4">
-                        <p className="text-sm text-foreground font-medium line-clamp-2">
-                          {video.prompt}
-                        </p>
-                        <div className="flex items-center justify-between mt-2">
-                          <span className="text-xs text-muted-foreground">
-                            {video.timestamp.toLocaleTimeString("ru-RU", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          {video.status === "ready" && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-xs h-7 gap-1"
-                            >
-                              <Icon name="Download" size={14} />
-                              Скачать
-                            </Button>
-                          )}
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <p className="text-sm text-foreground/90 line-clamp-2 flex-1">
+                            {video.prompt}
+                          </p>
+                          {getStatusBadge(video.status)}
                         </div>
+                        <p className="text-xs text-muted-foreground">
+                          {video.timestamp.toLocaleTimeString("ru-RU", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
                       </div>
-                    </div>
+                    </Card>
                   ))}
                 </div>
               )}
-            </ScrollArea>
-          </Card>
+            </div>
+          </ScrollArea>
+        </Card>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Сгенерировано видео: <span className="font-semibold text-primary">{videos.length}</span>
+          </p>
         </div>
       </div>
     </div>
